@@ -10,6 +10,7 @@
  * along with SharpNEAT; if not, see https://opensource.org/licenses/MIT.
  */
 using System;
+using System.Buffers;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -22,8 +23,9 @@ using SharpNeat.Experiments.Windows;
 using SharpNeat.Neat;
 using SharpNeat.Neat.EvolutionAlgorithm;
 using SharpNeat.Neat.Genome;
-using SharpNeat.Neat.Genome.IO;
 using SharpNeat.Windows.App.Experiments;
+using SharpNeat.Windows.App.Forms;
+using SharpNeat.Windows.App.Forms.TimeSeries;
 using static SharpNeat.Windows.App.AppUtils;
 
 namespace SharpNeat.Windows.App
@@ -35,12 +37,28 @@ namespace SharpNeat.Windows.App
     {
         private static readonly ILog __log = LogManager.GetLogger(typeof(MainForm));
 
+        #region Instance Fields
+
         // The current NEAT experiment.
         private INeatExperiment<double> _neatExperiment;
         private NeatPopulation<double> _neatPop;
         private EvolutionAlgorithmRunner _eaRunner;
         private IExperimentUI _experimentUI;
         private GenomeForm _bestGenomeForm;
+
+        // Time series forms.
+        private FitnessTimeSeriesForm _fitnessTimeSeriesForm;
+        private ComplexityTimeSeriesForm _complexityTimeSeriesForm;
+        private EvalsPerSecTimeSeriesForm _evalsPerSecTimeSeriesForm;
+
+        // Rankings forms.
+        private RankGraphForm _speciesSizeRankForm;
+        private RankPairGraphForm _speciesFitnessRankForm;
+        private RankPairGraphForm _speciesComplexityRankForm;
+        private RankGraphForm _genomeFitnessRankForm;
+        private RankGraphForm _genomeComplexityRankForm;
+
+        #endregion
 
         #region Form Constructor / Initialisation
 
@@ -169,10 +187,20 @@ namespace SharpNeat.Windows.App
             UpdateUIState();
             UpdateUIState_ResetStats();
 
-            // Clear the best genome form (if open).
-            if(_bestGenomeForm is object) {
-                _bestGenomeForm.Genome = null;
-            }
+            // Clear/reset child forms (those that are open).
+            if(_bestGenomeForm is object) { _bestGenomeForm.Genome = null; }
+
+            // Time series forms.
+            if(_fitnessTimeSeriesForm is object) { _fitnessTimeSeriesForm.Clear(); }
+            if(_complexityTimeSeriesForm is object) { _complexityTimeSeriesForm.Clear(); }
+            if(_evalsPerSecTimeSeriesForm is object) { _evalsPerSecTimeSeriesForm.Clear(); }
+
+            // Rankings forms.
+            if(_speciesSizeRankForm is object) { _speciesSizeRankForm.Clear(); }
+            if(_speciesFitnessRankForm is object) { _speciesFitnessRankForm.Clear(); }
+            if(_speciesComplexityRankForm is object) { _speciesComplexityRankForm.Clear(); }
+            if(_genomeFitnessRankForm is object) { _genomeFitnessRankForm.Clear(); }
+            if(_genomeComplexityRankForm is object) { _genomeComplexityRankForm.Clear(); }
 
             // Take the opportunity to clean-up the heap.
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true, true);
@@ -188,87 +216,6 @@ namespace SharpNeat.Windows.App
             if(sb.Length > 0) {
                 Clipboard.SetText(sb.ToString());
             }
-        }
-
-        #endregion
-
-        #region UI Event Handlers [File Menu Items]
-
-        private void saveBestGenomeToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            // Get the current best genome.
-            NeatGenome<double> bestGenome = _neatPop?.BestGenome;
-            if(bestGenome is null) {
-                return;
-            }
-
-            // Ask the user to select a file path and name to save to.
-            string filepath = SelectFileToSave("Save best genome", "genome", "(*.genome)|*.genome");
-            if(string.IsNullOrEmpty(filepath)) {
-                return;
-            }
-
-            // Save the genome.
-            try
-            { 
-                NeatGenomeSaver<double>.Save(bestGenome, filepath);
-            }
-            catch(Exception ex)
-            {
-                __log.ErrorFormat("Error saving genome; [{0}]", ex.Message);
-            }
-        }
-
-        #endregion
-
-        #region UI Event Handlers [View Menu Items]
-
-        private void bestGenomeToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            IExperimentUI experimentUI = GetExperimentUI();
-            if(experimentUI is null) {
-                return;
-            }
-
-            GenomeControl genomeCtrl = experimentUI.CreateGenomeControl();
-            if(experimentUI is null) {
-                return;
-            }
-
-            // Create form.
-            _bestGenomeForm = new GenomeForm("Best Genome", genomeCtrl);
-
-            // Attach an event handler to update this main form when the genome form is closed.
-            _bestGenomeForm.FormClosed += new FormClosedEventHandler(delegate(object senderObj, FormClosedEventArgs eArgs)
-            {
-                _bestGenomeForm = null;
-                bestGenomeToolStripMenuItem.Enabled = true;
-            });
-
-            // Prevent creation of more then one instance of the genome form.
-            bestGenomeToolStripMenuItem.Enabled = false;
-
-            // Get the current best genome.
-            NeatGenome<double> bestGenome = _neatPop?.BestGenome;
-            if(bestGenome is object)
-            {
-                // Set the form's current genome. If the EA is running it will be set shortly anyway, but this ensures we 
-                // see a genome right away, regardless of whether the EA is running or not.
-                _bestGenomeForm.Genome = bestGenome;
-            }
-
-            // Show the form.
-            _bestGenomeForm.Show(this);
-        }
-
-        #endregion
-
-        #region UI Event Handlers [About Menu Item]
-
-        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            Form frmAboutBox = new AboutForm();
-            frmAboutBox.ShowDialog(this);
         }
 
         #endregion
@@ -311,11 +258,82 @@ namespace SharpNeat.Windows.App
             // Update stats fields.
             UpdateUIState_EaStats();
 
-            // Update the best genome form (if open).
+            // Update child forms (those that are open).
             if(_bestGenomeForm is object)
             { 
                 NeatEvolutionAlgorithm<double> neatEa = (NeatEvolutionAlgorithm<double>)(_eaRunner.EA);
                 _bestGenomeForm.Genome = neatEa.Population.BestGenome;
+            }
+
+            // Time series forms.
+            if(_fitnessTimeSeriesForm is object) {
+                _fitnessTimeSeriesForm.UpdateData(_eaRunner.EA.Stats, _neatPop.NeatPopulationStats);
+            }
+
+            if(_complexityTimeSeriesForm is object) {
+                _complexityTimeSeriesForm.UpdateData(_eaRunner.EA.Stats, _neatPop.NeatPopulationStats);
+            }
+
+            if(_evalsPerSecTimeSeriesForm is object) {
+                _evalsPerSecTimeSeriesForm.UpdateData(_eaRunner.EA.Stats, _neatPop.NeatPopulationStats);
+            }
+
+            // Rankings forms.
+            if(_speciesSizeRankForm is object)
+            {
+                double[] speciesSizeByRank = GetSpeciesSizeByRank(out int speciesCount);
+                try {
+                    _speciesSizeRankForm.UpdateData(speciesSizeByRank.AsSpan(0, speciesCount));
+                }
+                finally {
+                    ArrayPool<double>.Shared.Return(speciesSizeByRank);
+                }
+            }
+
+            if(_speciesFitnessRankForm is object)
+            {
+                GetSpeciesFitnessByRank(out double[] bestFitnessByRank, out double[] meanFitnessSeries, out int speciesCount);
+                try {
+                    _speciesFitnessRankForm.UpdateData(bestFitnessByRank.AsSpan(0, speciesCount), meanFitnessSeries.AsSpan(0, speciesCount));
+                }
+                finally {
+                    ArrayPool<double>.Shared.Return(bestFitnessByRank);
+                    ArrayPool<double>.Shared.Return(meanFitnessSeries);
+                }
+            }
+
+            if(_speciesComplexityRankForm is object)
+            {
+                GetSpeciesComplexityByRank(out double[] bestComplexityByRank, out double[] meanComplexitySeries, out int speciesCount);
+                try {
+                    _speciesComplexityRankForm.UpdateData(bestComplexityByRank.AsSpan(0, speciesCount), meanComplexitySeries.AsSpan(0, speciesCount));
+                }
+                finally {
+                    ArrayPool<double>.Shared.Return(bestComplexityByRank);
+                    ArrayPool<double>.Shared.Return(meanComplexitySeries);
+                }
+            }
+
+            if(_genomeFitnessRankForm is object)
+            {
+                double[] genomeFitnessByRank = GetGenomeFitnessByRank(out int genomeCount);
+                try {
+                    _genomeFitnessRankForm.UpdateData(genomeFitnessByRank.AsSpan(0, genomeCount));
+                }
+                finally {
+                    ArrayPool<double>.Shared.Return(genomeFitnessByRank);
+                }
+            }
+
+            if(_genomeComplexityRankForm is object)
+            {
+                double[] genomeComplexityByRank = GetGenomeComplexityByRank(out int genomeCount);
+                try {
+                    _genomeComplexityRankForm.UpdateData(genomeComplexityByRank.AsSpan(0, genomeCount));
+                }
+                finally {
+                    ArrayPool<double>.Shared.Return(genomeComplexityByRank);
+                }
             }
 
             // Write entry to log.
@@ -350,6 +368,98 @@ namespace SharpNeat.Windows.App
             }
 
             return _experimentUI;
+        }
+
+        #endregion
+
+        #region Private Methods [Child Form Update Subroutines]
+
+        private double[] GetSpeciesSizeByRank(out int count)
+        {
+            var speciesArr = _neatPop.SpeciesArray;
+            count = speciesArr.Length;
+
+            double[] speciesSizeByRank = ArrayPool<double>.Shared.Rent(count);
+
+            for(int i=0; i < count; i++) {
+                speciesSizeByRank[i] = speciesArr[i].GenomeList.Count;
+            }
+
+            // Sort size values (highest values first).
+            Array.Sort(speciesSizeByRank, 0, count, Utils.ComparerDesc);
+            return speciesSizeByRank;
+        }
+
+        private void GetSpeciesFitnessByRank(
+            out double[] bestFitnessByRank,
+            out double[] meanFitnessSeries,
+            out int count)
+        {
+            var speciesArr = _neatPop.SpeciesArray;
+            count = speciesArr.Length;
+
+            bestFitnessByRank = ArrayPool<double>.Shared.Rent(count);
+            meanFitnessSeries = ArrayPool<double>.Shared.Rent(count);
+
+            for(int i=0; i < count; i++) 
+            {
+                bestFitnessByRank[i] = speciesArr[i].GenomeList[0].FitnessInfo.PrimaryFitness;
+                meanFitnessSeries[i] = speciesArr[i].Stats.MeanFitness;
+            }
+
+            // Sort best fitness values (highest values first).
+            Array.Sort(bestFitnessByRank, meanFitnessSeries, 0, count, Utils.ComparerDesc);
+        }
+
+        private void GetSpeciesComplexityByRank(
+            out double[] bestComplexityByRank,
+            out double[] meanComplexitySeries,
+            out int count)
+        {
+            var speciesArr = _neatPop.SpeciesArray;
+            count = speciesArr.Length;
+
+            bestComplexityByRank = ArrayPool<double>.Shared.Rent(count);
+            meanComplexitySeries = ArrayPool<double>.Shared.Rent(count);
+
+            for(int i=0; i < count; i++) 
+            {
+                bestComplexityByRank[i] = speciesArr[i].GenomeList[0].Complexity;
+                meanComplexitySeries[i] = speciesArr[i].CalcMeanComplexity();
+            }
+
+            // Sort best fitness values (highest values first).
+            Array.Sort(bestComplexityByRank, meanComplexitySeries, 0, count, Utils.ComparerDesc);
+        }
+
+        private double[] GetGenomeFitnessByRank(out int count)
+        {
+            var genList = _neatPop.GenomeList;
+            count = genList.Count;
+            double[] genomeFitnessByRank = ArrayPool<double>.Shared.Rent(count);
+
+            for(int i=0; i < count; i++) {
+                genomeFitnessByRank[i] = genList[i].FitnessInfo.PrimaryFitness;
+            }
+
+            // Sort fitness values (highest values first).
+            Array.Sort(genomeFitnessByRank, 0, count, Utils.ComparerDesc);
+            return genomeFitnessByRank;
+        }
+
+        private double[] GetGenomeComplexityByRank(out int count)
+        {
+            var genList = _neatPop.GenomeList;
+            count = genList.Count;
+            double[] genomeComplexityByRank = ArrayPool<double>.Shared.Rent(count);
+
+            for(int i=0; i < count; i++) {
+                genomeComplexityByRank[i] = genList[i].Complexity;
+            }
+
+            // Sort fitness values (highest values first).
+            Array.Sort(genomeComplexityByRank, 0, count, Utils.ComparerDesc);
+            return genomeComplexityByRank;
         }
 
         #endregion

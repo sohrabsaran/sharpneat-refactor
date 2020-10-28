@@ -9,22 +9,20 @@
  * You should have received a copy of the MIT License
  * along with SharpNEAT; if not, see https://opensource.org/licenses/MIT.
  */
-using log4net.Appender;
-using log4net.Core;
+using ZedGraph;
 
-namespace SharpNeat.Windows.App
+namespace SharpNeat.Windows.App.Forms
 {
-    /// <summary>
-    /// Log4net appender that redirects log messages to a custom logging system.
-    /// </summary>
-    public class LogWindowAppender : AppenderSkeleton
+    internal static class ZedGraphUtils
     {
         /// <summary>
-        /// Handle log event.
+        /// Apply a consistent style to the provided ZedGraph line item.
         /// </summary>
-        protected override void Append(LoggingEvent loggingEvent)
+        /// <param name="lineItem">Th eline item.</param>
+        public static void ApplyLineStyle(LineItem lineItem)
         {
-            Logger.Log(RenderLoggingEvent(loggingEvent));   
+            lineItem.Line.IsAntiAlias = true;
+            lineItem.Line.Width = 2f;
         }
     }
 }

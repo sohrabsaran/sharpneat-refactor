@@ -9,22 +9,24 @@
  * You should have received a copy of the MIT License
  * along with SharpNEAT; if not, see https://opensource.org/licenses/MIT.
  */
-using log4net.Appender;
-using log4net.Core;
+using System.Collections.Generic;
 
 namespace SharpNeat.Windows.App
 {
     /// <summary>
-    /// Log4net appender that redirects log messages to a custom logging system.
+    /// Miscellaneous utility objects and methods.
     /// </summary>
-    public class LogWindowAppender : AppenderSkeleton
+    internal static class Utils
     {
         /// <summary>
-        /// Handle log event.
+        /// Gets a <see cref="Comparer{double}"/> that can be used to sort items in descending order.
         /// </summary>
-        protected override void Append(LoggingEvent loggingEvent)
-        {
-            Logger.Log(RenderLoggingEvent(loggingEvent));   
-        }
+        public static Comparer<double> ComparerDesc => Comparer<double>.Create(
+                    delegate(double x, double y)
+                    {
+                        if(x > y) { return -1; }
+                        if(x < y) { return 1; }
+                        return 0;
+                    });
     }
 }
